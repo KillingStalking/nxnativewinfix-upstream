@@ -7,8 +7,36 @@
 # It only saves work: a damaged file costs the work it held and is made anew, and a full drive is one [RED] line. An entry is written and read whole, so its file is never seen half written.
 # Names, as in the folder this replaces: metallib/<target>/<digest>[_x].metallib (dmsh_mtlcache.py), shader/<digest>/<mac|ios>/<output>, index/<key>.json, variant/<digest>/<file> (dmsh_build.py).
 # Not part of the translation chain: it decides no output (dmsh_chain.py), like dmsh_mtlcache.py.
-import contextlib, fcntl, hashlib, json, multiprocessing, os, re, shutil, sqlite3, tarfile, threading, time
+import contextlib, hashlib, json, multiprocessing, os, re, shutil, sqlite3, tarfile, threading, time
 from pathlib import Path
+
+if os.name == 'nt':
+    import errno, msvcrt
+
+    def _flock(file, mode):
+        """Windows byte-range lock; exclusive locking is used because msvcrt has no shared mode."""
+        fd = file.fileno()
+        os.lseek(fd, 0, os.SEEK_SET)
+        if mode & 8:  # LOCK_UN
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        elif mode & 4:  # LOCK_NB
+            try: msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError as e:
+                if e.errno in (errno.EACCES, errno.EDEADLK): raise BlockingIOError(e.errno, e.strerror) from e
+                raise
+        else:
+            while True:
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                    break
+                except OSError as e:
+                    if e.errno not in (errno.EACCES, errno.EDEADLK): raise
+                    time.sleep(0.1)
+else:
+    import fcntl
+
+    def _flock(file, mode):
+        fcntl.flock(file, mode)
 
 SCHEMA = ('CREATE TABLE IF NOT EXISTS blob(id INTEGER PRIMARY KEY, hash BLOB UNIQUE NOT NULL, data BLOB NOT NULL)',
           'CREATE TABLE IF NOT EXISTS entry(name TEXT PRIMARY KEY, blob INTEGER NOT NULL, mtime REAL NOT NULL) WITHOUT ROWID')
@@ -83,7 +111,7 @@ class Store(_Files):
             # The writer keeps its own lease, independent of the harness: a killed harness may leave its builder (and forked workers) alive.
             os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
             self.use_lock = open(self.path + '.lock', 'a')
-            fcntl.flock(self.use_lock, fcntl.LOCK_SH)
+            _flock(self.use_lock, 1)
         self.readonly = _ReadOnly(source, say) if source else None
         self._open()
 
@@ -230,7 +258,7 @@ def bounded(path, limit, say=print, *, legacy=None):
     path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
     with open(str(path) + '.lock', 'a') as lock:
         def trim():
-            try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try: _flock(lock, 2 | 4)
             except BlockingIOError: return
             try:
                 if legacy is not None: adopt(legacy, path, say)
@@ -238,12 +266,12 @@ def bounded(path, limit, say=print, *, legacy=None):
                     store = Store(path, say)
                     try: store.trim(limit() if callable(limit) else limit)
                     finally: store.close()
-            finally: fcntl.flock(lock, fcntl.LOCK_UN)
+            finally: _flock(lock, 8)
         trim()
-        fcntl.flock(lock, fcntl.LOCK_SH)
+        _flock(lock, 1)
         try: yield
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            _flock(lock, 8)
             trim()
 
 

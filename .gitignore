@@ -11,3 +11,10 @@ dm/games/*/cb_extent.tsv
 .coverage
 .coverage.*
 /coverage.json
+
+# Windows port (win/)
+win/toolchain.json
+win/sdk/out/
+win/build/
+win/sdk/extract.log
+win/gui_settings.json

@@ -17,6 +17,7 @@
 #include <time.h>
 #include <math.h>
 #include "motion_fusion.h"
+#include "dm_motion.h"
 
 enum { NPAD_NO1 = 0, NPAD_HANDHELD = 0x20 };
 enum { STYLE_FULLKEY = 1u << 0, STYLE_HANDHELD = 1u << 1, STYLE_JOYDUAL = 1u << 2, STYLE_JOYLEFT = 1u << 3, STYLE_JOYRIGHT = 1u << 4 };
@@ -857,6 +858,43 @@ static void motion_set_to(live_motion *m, int p, const float acc[3], const float
 }
 void dm_motion_set(int p, const float acc[3], const float rot[3]) { motion_set(p, acc, rot, 0, 0); }
 void dm_motion_set_switch(int p, const float acc[3], const float rot[3]) { motion_set(p, acc, rot, 1, 0); }
+/* CoreMotion already fused this phone attitude; do not integrate its gyro a second time. */
+void dm_phone_motion_set(const dm_motion *sample) {
+    pthread_once(&g_motion_once, motion_env);
+    pthread_mutex_lock(&g_phone_motion.mu);
+    live_motion *m = &g_phone_motion;
+    uint64_t now = now_ns();
+    if (!sample || g_motion_off) {
+        motion_reset(&m->st); m->last_ns = m->received_ns = 0; m->count = 0; m->head = 0; motion_lag_reset(&m->lag);
+    } else {
+        motion_state *st = &m->st;
+        memcpy(st->acc, sample->acc, sizeof st->acc);
+        memcpy(st->gyro, sample->gyro, sizeof st->gyro);
+        memcpy(st->angle, sample->angle, sizeof st->angle);
+        for (int a = 0; a < 3; a++) for (int k = 0; k < 3; k++) st->R[k][a] = sample->dir[3 * a + k];
+        st->primed = 1;
+        if (m->last_ns && now - m->received_ns > MOTION_STALE_NS) {
+            motion_reset(st); m->last_ns = 0; m->count = 0; motion_lag_reset(&m->lag);
+            memcpy(st->acc, sample->acc, sizeof st->acc);
+            memcpy(st->gyro, sample->gyro, sizeof st->gyro);
+            memcpy(st->angle, sample->angle, sizeof st->angle);
+            for (int a = 0; a < 3; a++) for (int k = 0; k < 3; k++) st->R[k][a] = sample->dir[3 * a + k];
+            st->primed = 1;
+        }
+        if (m->last_ns) motion_lag_add(&m->lag, now - m->last_ns);
+        m->last_ns = m->received_ns = now;
+        if (!m->count) m->head = 0;
+        motion_sample *r = &m->ring[(m->head + m->count) % LIVE_RING];
+        r->t = now; motion_fill(st, r->acc, r->gyro, r->angle, r->dir);
+        if (m->count < LIVE_RING) m->count++; else m->head = (m->head + 1) % LIVE_RING;
+        if (g_motion_log && now - m->logged > 1000000000ull) {
+            m->logged = now;
+            LOG("[hid] motion player 1 (CoreMotion attitude): acc %+.2f %+.2f %+.2f G, gyro %+.3f %+.3f %+.3f rev/s",
+                st->acc[0], st->acc[1], st->acc[2], st->gyro[0], st->gyro[1], st->gyro[2]);
+        }
+    }
+    pthread_mutex_unlock(&m->mu);
+}
 void dm_motion_set_hid(int p, const float acc[3], const float rot[3], uint64_t t) { if (t) motion_set(p, acc, rot, 2, t); }
 void dm_motion_set_joy(int p, int side, const float acc[3], const float rot[3], uint64_t t) {
     if (t && p >= 0 && p < DM_PLAYERS && (side == 0 || side == 1)) { atomic_fetch_or(&g_joy_reported[p], 1u << side); motion_set_to(&g_joy_motion[p][side], p, acc, rot, 2, t); }

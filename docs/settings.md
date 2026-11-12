@@ -213,7 +213,7 @@ flowchart LR
 
 ### Performance HUD
 
-Apple's performance overlay over the game: frame rate, frame and GPU times, memory. Useful to see what a setting changes; leave it off for play.
+Choose **Off**, **Compact** or **Full (Apple)**. Compact shows FPS, GPU time, app memory, memory left before the iOS limit and Memory Guard state. Full uses Apple's Metal Performance HUD with all metrics available on the device, including frame-interval graphs, GPU timing and per-encoder timing. Full mode can add diagnostic overhead; use it when investigating performance, and leave the HUD off for ordinary play.
 
 ### Reset to tested defaults
 
@@ -286,6 +286,6 @@ A line like `DM_PRESENT_SNAP=0` in `Documents/env.txt` (in the Files app, under 
 | Pipeline prebuild | `DM_PSO_PREBUILD` | `1`, `0` |
 | Encode thread | `DM_NVN_ENC_THREAD` | `1`, `0` |
 | Hold frames when late | `DM_FPS_HOLD` | `on`, `off` |
-| Performance HUD | `DM_METAL_HUD` | `1`, `0` |
+| Performance HUD | `DM_METAL_HUD` | `0` (Off), `1` (Compact), `2` (Full Apple) |
 
 `DM_LAUNCHER=0` skips the settings screen; the choices you saved there still apply. `DM_SAVED_CHOICES=0` starts with the tested defaults and keeps your saved choices for later. How the settings are listed for each game: [dm/games/settings.tsv](../dm/games/settings.tsv).

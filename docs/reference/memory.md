@@ -569,3 +569,14 @@ The guest address space, heaps, pools, virtual address memory and the allocators
 - **Cause:** a command buffer that fails with `Insufficient Memory` frees nothing, and the game submits the next one.
 - **Fix:** general (`nvn_mtl.m` `res_top_once`): 32 such failures within 60 s end the process with a red line, as the session cannot recover and the machine may not either.
 - **Found on:** [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md).
+
+### iOS low-memory guard
+
+- **Purpose:** iOS may terminate an app when it exhausts its process memory allowance, sometimes without a useful crash log. The host therefore watches the remaining allowance and reduces transient graphics pressure before the process reaches the limit.
+- **Scope and default:** iOS only; enabled by default. `DM_MEM_GUARD=0` disables the guard.
+- **Sampling:** `nvn_mtl.m` samples `os_proc_available_memory()` every 500 ms and also listens for the operating system's memory-pressure warning and critical events.
+- **Level 1 — low memory:** below 600 MiB remaining, or after a memory-pressure warning, `dm_mem_guard()` reports level 1. `mtl_fps_target()` then caps the game's frame pacing at 30 FPS. The NVN frame-step path and the GL swap path use the same target, rather than changing only the displayed counter.
+- **Level 2 — critical memory:** below 300 MiB remaining, or after a critical pressure event, the guard reports level 2. It enables the texture memory saver, which discards the host's redundant copy of eligible uploaded textures after the GPU has consumed them, and calls `malloc_zone_pressure_relief(NULL, 0)` to return free malloc pages to the system. It does not destroy live game textures or indiscriminately purge Metal resources.
+- **Recovery:** the guard returns to level 0 only after more than 1 GiB remains available continuously for 15 seconds. This hysteresis avoids repeatedly switching the frame cap around a threshold.
+- **HUD:** the iOS performance HUD shows `GUARD 30` at level 1 and `GUARD 30+flush` at level 2. The runtime implementation is in `dm/gfx/nvn/nvn_mtl.m`; frame pacing is connected through `dm/gfx/nvn/hle_nvn.c`; the indicator is in `dm/ios/Sources/front_ios.m`.
+- **Diagnostics:** `DM_MEMSTAT=<file>` records the memory headroom and process footprint once per second. `DM_MEM_GUARD=0` is intended for controlled comparisons, not as a recommended setting on memory-constrained devices.

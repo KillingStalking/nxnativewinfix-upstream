@@ -10,3 +10,6 @@ enum { NVN_SWZ_ZERO = 0, NVN_SWZ_ONE = 1, NVN_SWZ_R = 2, NVN_SWZ_G = 3, NVN_SWZ_
 //          0 = no Metal counterpart (*mtl is set to 0; handling is in the table comments, mainly expanding 3-component formats to 4 components on upload).
 // swz gives, for each of the four output components r/g/b/a, which source component to take (MTLTextureSwizzleChannels order); may be NULL.
 int nvn_fmt_to_mtl(int nvn_format, uint32_t *mtl_pixel_format, uint8_t swz[4]);
+
+// While BC textures are decoded on the CPU (nvn_bc_soft, bc_soft.h): the BC Metal format of a BC NVN format, whose blocks the upload decodes; 0 otherwise
+uint32_t nvn_fmt_bc_soft(int nvn_format);

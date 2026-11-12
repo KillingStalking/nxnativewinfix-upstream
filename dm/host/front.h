@@ -4,10 +4,17 @@
 // Metal reads HUD switches when the first device is made. Called before host preload and again after the launcher applies its settings; explicit environment values win.
 static inline void front_hud_env(void) {
     const char *e = getenv("DM_METAL_HUD");
-    if (!e || !atoi(e)) return;
+    int mode = e ? atoi(e) : 0;   // 0 off, 1 compact, 2 full Apple HUD
+    if (mode <= 0) return;
     setenv("MTL_HUD_ENABLED", "1", 0);
     // Spatial scaling has no temporal exposure: showing that HUD metric makes the MetalFX rows flicker.
     setenv("MTL_HUD_HIDE_METALFX_METRICS", "1", 0);
+    if (mode >= 2) {
+        // Apple's full metric set. Unsupported metrics are omitted by the OS; encoder timing adds per-encoder GPU costs.
+        setenv("MTL_HUD_ELEMENTS", "device,rosetta,layersize,layerscale,memory,fps,frameinterval,gputime,thermal,frameintervalgraph,presentdelay,frameintervalhistogram,metalcpu,gputimeline,shaders,framenumber,disk,fpsgraph,toplabeledcommandbuffers,toplabeledencoders", 0);
+        setenv("MTL_HUD_ENCODER_TIMING_ENABLED", "1", 0);
+        setenv("MTL_HUD_SHOW_METRICS_RANGE", "1", 0);
+    }
 }
 // Run the guest: with a window the guest runs on its own thread and the main thread belongs to the system UI; without a window it runs directly on the current thread.
 void front_run(void (*guest)(void));

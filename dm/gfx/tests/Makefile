@@ -636,3 +636,7 @@ check_t_pool_standin: t_pool_standin
 	MTL_DEBUG_LAYER=1 DM_NVN_ENC_THREAD=0 ./t_pool_standin
 	MTL_DEBUG_LAYER=1 DM_NVN_ENC_THREAD=1 ./t_pool_standin
 	MTL_DEBUG_LAYER=1 DM_NVN_ENC_THREAD=0 DM_NVN_POOL_STANDIN=0 ./t_pool_standin
+
+# GPU BC1/BC2/BC3 → ASTC transcoder: compare Metal output byte-for-byte with the C reference.
+t_bc2astc_gpu: t_bc2astc_gpu.m ../tex/nvn_bc2astc.c ../tex/nvn_bc2astc.h ../tex/bc2astc_core.h ../tex/bc2astc_body.inc ../tex/bc2astc_msl.h
+	clang $(CFLAGS) -fobjc-arc -o $@ t_bc2astc_gpu.m ../tex/nvn_bc2astc.c $(FW)

@@ -4,6 +4,10 @@ Play your own Nintendo Switch and Switch 2 games natively on Apple silicon Macs,
 
 It is not an emulator: the game's own code runs directly on the Apple chip, with Switch graphics rebuilt on Metal. Nothing from any game is in this repository, and the project is not affiliated with Nintendo or any game publisher.
 
+## Windows and Linux builds
+
+The community Windows/Linux build port is included in this fork. See [README.windows.md](README.windows.md) for setup, the graphical builder, split IPA builds and troubleshooting; the implementation is in [`win/`](win/).
+
 [Games](#games) · [Community front ends](#community-front-ends) · [Requirements](#requirements) · [How to play](#how-to-play) · [Discussions](#discussions) · [For developers](#for-developers)
 
 ## Games

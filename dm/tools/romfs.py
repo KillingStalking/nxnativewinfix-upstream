@@ -28,9 +28,7 @@ class Image:
         self.path = _os.path.abspath(path)
         self.stat = _os.stat(self.path)
         with builtins.open(self.path, 'rb') as f:
-            head = f.read(HEAD.size)
-            if len(head) < HEAD.size: raise ValueError(f'invalid RomFS image header: {path}')
-            magic, off, size, count = HEAD.unpack(head)
+            magic, off, size, count = HEAD.unpack(f.read(HEAD.size))
             if magic != MAGIC or not 0 < count <= 0xffffffff or off < HEAD.size or off > self.stat.st_size or size != self.stat.st_size - off or count > size // ENT.size:
                 raise ValueError(f'invalid RomFS image header: {path}')
             f.seek(off); self.index = f.read(size)
@@ -38,8 +36,8 @@ class Image:
         self.count, self.pool = count, count * ENT.size
         next_child = 1
         for k in range(count):
-            a, b, no, nl, t, flags = self.entry(k)
-            if no + nl > size - self.pool or t > 1 or flags > t or (k == 0 and (t or nl)):   # flags: 1 on a damaged file (romfs_image.py), 0 otherwise
+            a, b, no, nl, t, pad = self.entry(k)
+            if no + nl > size - self.pool or t > 1 or pad or (k == 0 and (t or nl)):
                 raise ValueError(f'invalid RomFS image entry {k}: {path}')
             name = self.name(k)
             if k and (not nl or nl > 0x300 or b'\0' in name or b'/' in name or name in (b'.', b'..')):
@@ -93,6 +91,7 @@ def is_image(path):
 
 def _resolve(path):
     p = _os.path.abspath(_os.fsdecode(path))
+    if _os.sep != '/': p = p.replace(_os.sep, '/')
     parts = p.split('/')
     for i, part in enumerate(parts):
         if not part.endswith('.img'): continue
@@ -115,7 +114,7 @@ _fd_ranges = {}
 
 class _File(io.RawIOBase):
     def __init__(self, image, k):
-        self.fd = _os.open(image.path, _os.O_RDONLY)
+        self.fd = _os.open(image.path, _os.O_RDONLY | getattr(_os, 'O_BINARY', 0))
         self.start, self.length = image.entry(k)[:2]
         self.pos = 0
         _fd_ranges[self.fd] = (self.start, self.length)
@@ -129,7 +128,12 @@ class _File(io.RawIOBase):
         self.pos = pos; return pos
     def readinto(self, buffer):
         size = min(len(buffer), max(0, self.length - self.pos))
-        data = _os.pread(self.fd, size, self.start + self.pos)
+        if hasattr(_os, 'pread'):
+            data = _os.pread(self.fd, size, self.start + self.pos)
+        else:
+            # Windows has no pread; each view owns its descriptor and file offset.
+            _os.lseek(self.fd, self.start + self.pos, _os.SEEK_SET)
+            data = _os.read(self.fd, size)
         buffer[:len(data)] = data; self.pos += len(data)
         return len(data)
     def close(self):

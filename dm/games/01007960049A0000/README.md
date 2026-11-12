@@ -32,6 +32,7 @@ The work folder's `run/route.sh <run> [secs]` boots on a fresh save and presses 
 
 ## Found on this game
 
+- **Windows shader split could not open image-backed CPK files** (issue #5): [Windows scanners cannot open files inside a RomFS image](../../../docs/reference/packing.md#windows-scanners-cannot-open-files-inside-a-romfs-image). Resolved in the shared reader with synthetic Windows regression tests; a full Windows build of this game remains unverified.
 - **SDK 3.6.0 answered as SDK 4**, with no host change for the SDK itself: [services.md](../../../docs/reference/services.md#sdk-360-answered-as-sdk-4).
 - **CRI CPK archives and the BNSH files in their DAT archives** (`cpk.py`, `cpk_jobs`): [shaders.md](../../../docs/reference/shaders.md#bnsh-files-in-platinumgames-dat-archives-inside-cri-cpk-archives).
 - **A cleared attachment larger than the render pass is cleared in a pass of its own** (`rp_begin_ex_`): [rendering.md](../../../docs/reference/rendering.md#clears-of-attachments-larger-than-the-render-pass).

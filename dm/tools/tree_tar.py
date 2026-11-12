@@ -7,11 +7,16 @@
 #   tar and <folder>.gone       stopped while the pack removed the folder: the tar is complete, the rest goes
 #   <folder>.unpack, <tar>.part unfinished, they go
 # unpack takes a lock on the parent folder that pack releases: regress.py's chain builds share a game's compile cache with the NSP script, and neither may pack it under the other.
-import fcntl, os, shutil, subprocess, time
+import errno, os, shutil, subprocess, time
 from pathlib import Path
 
+if os.name == 'nt':
+    import msvcrt
+else:
+    import fcntl
+
 QUIET_DAYS, QUIET_MIN_FILES, QUIET_FREE = 14, 100, 20 * 2**30   # pack_quiet
-_locks = {}   # parent folder → descriptor: a second unpack in this process (Spyder runs each F5 in one process, after a build that raised) takes what it already holds
+_locks = {}   # parent folder → (descriptor, Windows lock-file flag): a second unpack in this process takes what it already holds
 
 
 def tar_of(folder): return Path(f'{folder}.tar')
@@ -28,6 +33,38 @@ def _remove(p):
 def _lock(folder, say=None):   # without say, it does not wait: False while another process holds the lock
     parent = str(Path(folder).parent)
     if parent in _locks or not os.path.isdir(parent): return True
+    windows_lock = os.name == 'nt'
+    if windows_lock:
+        # Windows cannot open a directory as a lockable file. Use one persistent
+        # byte-range lock file per parent, preserving the same cross-process
+        # exclusion that flock on the parent directory provides on Unix.
+        lock_path = os.path.join(parent, '.tree_tar.lock')
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o666)
+            if os.fstat(fd).st_size == 0: os.write(fd, bytes([0]))
+            os.lseek(fd, 0, os.SEEK_SET)
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError as e:
+                if e.errno not in (errno.EACCES, errno.EDEADLK): raise
+                if not say:
+                    os.close(fd); return False
+                say(f'waiting for another build to finish with {folder}')
+                while True:
+                    try:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError as e:
+                        if e.errno not in (errno.EACCES, errno.EDEADLK): raise
+                        time.sleep(0.1)
+        except OSError:   # a drive without usable file locking: continue without a lock
+            try: os.close(fd)
+            except (OSError, UnboundLocalError): pass
+            return True
+        _locks[parent] = (fd, True)
+        return True
+
     fd = os.open(parent, os.O_RDONLY)
     try:
         try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -38,13 +75,20 @@ def _lock(folder, say=None):   # without say, it does not wait: False while anot
             fcntl.flock(fd, fcntl.LOCK_EX)
     except OSError:   # a drive without flock: no lock, as before this file
         os.close(fd); return True
-    _locks[parent] = fd
+    _locks[parent] = (fd, False)
     return True
 
 
 def _unlock(folder):
-    fd = _locks.pop(str(Path(folder).parent), None)
-    if fd is not None: os.close(fd)
+    held = _locks.pop(str(Path(folder).parent), None)
+    if held is not None:
+        fd, windows_lock = held
+        if windows_lock:
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            except OSError: pass
+        os.close(fd)
 
 
 def unpack(folder, say=print):

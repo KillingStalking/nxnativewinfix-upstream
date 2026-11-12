@@ -21,7 +21,7 @@ The offsets of each level and layer within the storage, and the block height and
 
 ## BC textures
 
-Only GPUs with BC compressed textures are supported (`supportsBCTextureCompression` of `MTLDevice`: Apple silicon Macs and the latest iPhones), so BC textures are created and uploaded as BC; there is no decompression path. A device without them is refused at start ([GPUs without BC textures](../../../docs/reference/rendering.md#gpus-without-bc-textures-are-refused-at-start)). A BC texture is never a render target and its raw blocks are not sampled through an uncompressed view (Metal has no such views; Breath of the Wild encodes one 32×32 BC4 texture on the GPU, GitHub issue #4).
+On a device without native BC texture support (`MTLDevice.supportsBCTextureCompression == NO`, including A16 and older iPhone / iPad GPUs), `nvn_bc_soft` switches the format mapping and upload path to software decompression. BC1 / BC2 / BC3 / BC7 are stored as ASTC 4×4 by default; BC4 / BC5 become R8 / RG8; unsigned BC6H becomes RG11B10F and signed BC6H becomes RGBA16F. BC1–BC3 can use the Metal compute transcoder when GPU deswizzling and its pipeline are available; otherwise the integer CPU transcoder is used. BC7 and the remaining formats use the software decoder. Sparse textures and 3D BC1 / BC2 / BC3 / BC7 use uncompressed pixel storage; ASTC is not assumed to be valid for 3D textures. `DM_BC_SOFT=1` forces the no-BC path for testing on a supported GPU, and `DM_BC_ASTC=0` selects uncompressed formats instead of ASTC / packed HDR output. A BC texture is never a render target and its raw blocks are not sampled through an uncompressed view.
 
 ## Tests
 
@@ -46,3 +46,10 @@ make -C dm/gfx/tex/tests run       # run t_fmt_mtl and t_tex
 - `nvn_deswizzle()` does not support multisampled textures, textures with the LINEAR flag (which are linear to begin with) or the BUFFER target; it returns -1 when it encounters them.
 - Cubes and cube arrays are handled as layered textures.
 - The component bit order of the 16-bit packed formats (565 / 5551 / 4444) is mapped according to the format names and has not been checked with real data; they are marked as "substitute" in the format table.
+
+
+## BC1–BC3 → ASTC 4×4 transcoding
+
+On GPUs without BC support, BC1, BC2 and BC3 keep their compressed-size storage by being transcoded to ASTC 4×4 at upload. The CPU fallback uses the integer reference in `bc2astc_core.h` / `bc2astc_body.inc`; the same body is compiled as the Metal kernel in `bc2astc_msl.h`. CPU and GPU output must be byte-identical. BC7 continues to use the existing software ASTC encoder; BC4 / BC5 and signed BC6H retain their software-decoded formats.
+
+The standalone Metal parity test is `dm/gfx/tests/t_bc2astc_gpu.m`. It exercises BC1–BC3 with pitched buffers and checks the GPU output against the C reference, including the transcoder's layout and endpoint-swap cases.

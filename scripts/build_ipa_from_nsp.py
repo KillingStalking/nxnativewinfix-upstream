@@ -3289,7 +3289,7 @@ class Stopped(BaseException):   # a SIGTERM or SIGHUP, raised by cli's handler: 
 def _sigterm(sig, frame): raise Stopped(sig)
 
 
-STOPS = (signal.SIGTERM, signal.SIGHUP)   # the signals cli turns into Stopped
+STOPS = tuple(s for s in (getattr(signal, 'SIGTERM', None), getattr(signal, 'SIGHUP', None)) if s is not None)   # signals supported by this host
 
 
 def cli(argv):   # returns the exit code: 0 done, 1 error, 130 interrupted, 143 stopped by SIGTERM, 129 by SIGHUP
