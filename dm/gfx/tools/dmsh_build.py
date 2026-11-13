@@ -77,7 +77,7 @@ def mac_compile(msl, air, lib):   # same interface as ios_metal.compile; the pre
 def record_index(path):   # → (an open descriptor, {a record's key: its bytes' (start, end)}): shader_split.py writes each record's key at +0x08, its bytes from its marker to the next one
     # Scanned through a read-only mapping that is closed again, so no package stays in this process. Pokopia's ps_rdb.bin (4.25 GB) read and cut into its 105,118
     # records left the process at 8.7 GB, and each fork (every spirv-cross and Metal compile) then took 75 ms instead of 3 with the GIL held: one shader worker at a time (GitHub issue #1036)
-    fd = os.open(path, os.O_RDONLY); n = os.fstat(fd).st_size
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_BINARY', 0)); n = os.fstat(fd).st_size
     if not n: return fd, {}
     with mmap.mmap(fd, n, access=mmap.ACCESS_READ) as m:
         # Do not search for the next marker in arbitrary shader bytes: BTCDBTCD
@@ -103,6 +103,7 @@ def record_index(path):   # → (an open descriptor, {a record's key: its bytes'
 # position-independent semantics if shader reads ever become concurrent.
 # Both APIs may return a short read, so keep reading until the requested span
 # is complete; shader records must never be silently truncated.
+
 _pread_lock = threading.Lock()
 def read_at(fd, size, offset):
     chunks = []
@@ -110,19 +111,33 @@ def read_at(fd, size, offset):
     if hasattr(os, 'pread'):
         while done < size:
             chunk = os.pread(fd, size - done, offset + done)
-            if not chunk: break
-            chunks.append(chunk); done += len(chunk)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            done += len(chunk)
     else:
         with _pread_lock:
             os.lseek(fd, offset, os.SEEK_SET)
             while done < size:
                 chunk = os.read(fd, size - done)
-                if not chunk: break
-                chunks.append(chunk); done += len(chunk)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                done += len(chunk)
+
     data = b''.join(chunks)
     if len(data) != size:
-        raise OSError(f'short shader package read at {offset:#x}: requested {size} bytes, got {len(data)}')
+        try:
+            actual_size = os.fstat(fd).st_size
+        except OSError as exc:
+            actual_size = f'fstat failed: {exc}'
+        raise OSError(
+            f'short shader package read: fd={fd}, offset={offset:#x}, '
+            f'requested={size}, got={len(data)}, fd_size={actual_size}'
+        )
     return data
+
+
 
 def clone(src, dst):   # APFS copy-on-write, else a plain copy; the clonefile call, not a cp: a fork of this large process costs about 6 ms
     os.makedirs(os.path.dirname(dst), exist_ok=True)

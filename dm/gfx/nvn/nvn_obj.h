@@ -104,8 +104,8 @@ enum {
     OP_BIND_PROGRAM, OP_BIND_STATE, OP_BIND_VATTR, OP_BIND_VSTREAM, OP_BIND_VBUF,
     OP_BIND_UBO, OP_BIND_SSBO, OP_BIND_TEX, OP_BIND_SAMP,
     OP_STENCIL, OP_POLY_OFFSET, OP_DRAW, OP_DRAW_IDX, OP_DISPATCH, OP_BARRIER,
-    OP_SET_TEX_POOL, OP_SET_SAMP_POOL, OP_COPY_B2T, OP_COPY_STRIDE, OP_BLEND_COLOR, OP_COPY_T2B, OP_BIND_IMG, OP_COPY_T2T, OP_RESET_COUNTER, OP_CLEAR_TEX, OP_CLEAR_BUF, OP_DEPTH_CLAMP, OP_RENDER_COND, OP_FENCE_SYNC, OP_TF_BIND, OP_TF_STATE, OP_RAST_DISCARD, OP_VP_SWIZZLE, OP_BIND_TEX1, OP_PRIM_RESTART, OP_BIND_UBO_SMALL, OP_BIND_VBUF1, OP_COUNT_
-};
+    OP_SET_TEX_POOL, OP_SET_SAMP_POOL, OP_COPY_B2T, OP_COPY_STRIDE, OP_BLEND_COLOR, OP_COPY_T2B, OP_BIND_IMG, OP_COPY_T2T, OP_RESET_COUNTER, OP_CLEAR_TEX, OP_CLEAR_BUF, OP_DEPTH_CLAMP, OP_RENDER_COND, OP_FENCE_SYNC, OP_TF_BIND, OP_TF_STATE, OP_RAST_DISCARD, OP_VP_SWIZZLE, OP_BIND_TEX1, OP_PRIM_RESTART, OP_BIND_UBO_SMALL, OP_BIND_VBUF1, OP_DRAW_TEX, OP_ALPHA_REF, OP_PUSH_CONST, OP_DLSS, OP_MULTI_DRAW, OP_WAIT_EVENT, OP_WAIT_SYNC, OP_COUNT_
+	};
 // Payload (immediately follows op_hdr)
 typedef struct { int32_t n; const tex_t *color[8]; view_t cview[8]; uint8_t has_cview[8]; const tex_t *depth; view_t dview; uint8_t has_dview; } p_set_rt;
 typedef struct { int32_t index, mask; float rgba[4]; } p_clear_color;
@@ -146,11 +146,48 @@ typedef struct { int32_t stage, first, n, defer; uint64_t src; uint64_t h[32]; }
 // sampler ID << 20, all a patch writes); tbase / sbase are the numbering bases of the descriptor pools the command buffer had bound (hle_nvn.c bind_handles), added when it is read.
 // Read it with bind_rec, which gives a p_bind_handles
 typedef struct { int32_t stage, slot; uint64_t h; int32_t tbase, sbase; } p_bind_tex1;
+#define BIND_TEX1_NOBASE 0x100
+
+typedef struct {
+    uint64_t ind, cnt, ibuf;
+    int64_t stride;
+    int32_t max, prim, itype;
+} p_multi_draw;
+
+typedef struct {
+    uint64_t h;
+    NVNdrawTextureRegion d, s;
+} p_draw_tex;
+
+enum {
+    DLSS_COLOR, DLSS_DEPTH, DLSS_MOTION, DLSS_OUTPUT,
+    DLSS_BIAS, DLSS_EXPOSURE, DLSS_TEXTURES
+};
+
+typedef struct {
+    const tex_t *tex[DLSS_TEXTURES];
+    uint64_t net;
+    int32_t iw, ih, ow, oh, base[DLSS_TEXTURES][2];
+    float mv[2], jitter[2], pre_exposure;
+    uint32_t flags, reset;
+} p_dlss;
+
+typedef struct { float ref; } p_alpha_ref;
+typedef struct {
+    uint16_t compute, offset;
+    uint32_t size;
+    uint8_t data[];
+} p_push_const;
 static inline const p_bind_handles *bind_rec(uint32_t op, const void *a, p_bind_handles *t) {
     if (op != OP_BIND_TEX1) return a;
-    const p_bind_tex1 *b = a; uint64_t tid = b->h & 0xfffff, sid = (uint32_t)b->h >> 20;
-    t->stage = b->stage; t->first = b->slot; t->n = 1; t->defer = 0; t->src = 0;
-    t->h[0] = (tid ? tid + (uint64_t)b->tbase : 0) | (sid ? sid + (uint64_t)b->sbase : 0) << 20; return t;
+    const p_bind_tex1 *b = a;
+    int nobase = b->stage & BIND_TEX1_NOBASE;
+    int32_t tb = nobase ? 0 : b->tbase, sb = nobase ? 0 : b->sbase;
+    uint64_t tid = b->h & 0xfffff, sid = (uint32_t)b->h >> 20;
+    t->stage = b->stage & ~BIND_TEX1_NOBASE;
+    t->first = b->slot; t->n = 1; t->defer = 0; t->src = 0;
+    t->h[0] = (tid ? tid + (uint64_t)tb : 0) | (sid ? sid + (uint64_t)sb : 0) << 20;
+    return t;
 }
 // Texture slots of a stage: 0-127 nvnCommandBufferBindTexture's (combined handles), 128-255 the separate texture binds. The driver keeps the two in tables of their own (c2 0x20 + 8 r and
 // 0x168 + 8 r, dm/gfx/tools/dmsh_build.py), which the shaders' reflection names as these slots, so a game may bind both kinds in the same frame (Monster Hunter Rise: BindTexture slot 0 beside separate slots 0-4)
@@ -168,6 +205,15 @@ static inline const p_draw_idx *draw_idx_rec(const void *a, uint32_t size, p_dra
 typedef struct { int32_t x, y, z; uint64_t caller, ind; } p_dispatch;   // caller: return address of the game call site (to locate the dispatcher); ind != 0: DispatchComputeIndirect, the group counts are read by the GPU from that address
 typedef struct { const dpool_t *pool; } p_set_pool;
 typedef struct { uint64_t src; const tex_t *tex; view_t view; uint8_t has_view; NVNcopyRegion r; int32_t flags; } p_copy_b2t;
+typedef struct { int64_t row, image; } p_copy_strides;
+
+#define COPY_STRIDES_OFF ((((sizeof(p_copy_b2t) + 7) & ~(size_t)7)) + sizeof(tex_t))
+
+static inline const p_copy_strides *copy_strides(const void *a, uint32_t size) {
+    return size >= 8 && size - 8 >= COPY_STRIDES_OFF + sizeof(p_copy_strides)
+        ? (const p_copy_strides *)((const uint8_t *)a + COPY_STRIDES_OFF)
+        : NULL;
+}
 // A host-only bit in flags: DM_COPY_RESOLVE = this is a Downsample (multisample resolve), recorded as a texture copy so everything else treats it as one (reads the source, writes the destination)
 #define DM_COPY_RESOLVE 0x40000000
 typedef struct { const tex_t *src, *dst; view_t sv, dv; uint8_t has_sv, has_dv; NVNcopyRegion sr, dr; int32_t flags; } p_copy_t2t;   // Reused for T2B: src stores the destination buffer address

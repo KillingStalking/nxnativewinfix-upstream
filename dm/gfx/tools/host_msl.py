@@ -21,9 +21,14 @@ def c_str(s):
     esc = lambda l: l.replace('\\', '\\\\').replace('"', '\\"')
     return '\n'.join(f'    "{esc(l)}\\n"' for l in lines[:-1]) + (f'\n    "{esc(lines[-1])}"' if lines[-1] else '') or '    ""'
 
-ver = subprocess.run(['xcrun', '-sdk', a.sdk, 'metal', '--version'], capture_output=True, text=True)
-ver = ver.stdout.splitlines()[0].strip() if ver.returncode == 0 and ver.stdout else ''
-sdk = subprocess.run(['xcrun', '-sdk', a.sdk, '--show-sdk-path'], capture_output=True, text=True).stdout.strip()
+try:
+    vr = subprocess.run(['xcrun', '-sdk', a.sdk, 'metal', '--version'], capture_output=True, text=True)
+    ver = vr.stdout.splitlines()[0].strip() if vr.returncode == 0 and vr.stdout else ''
+    sr = subprocess.run(['xcrun', '-sdk', a.sdk, '--show-sdk-path'], capture_output=True, text=True)
+    sdk = sr.stdout.strip()
+except OSError:
+    ver = ''
+    sdk = ''
 sources = [(src, open(src).read()) for src in sorted(a.sources)]
 # The generator itself is an input too: a changed compile flag or header format must invalidate an existing library.
 inputs = hashlib.sha256(repr((a.sdk, a.min, ver, sdk, sources)).encode() + open(__file__, 'rb').read()).hexdigest()

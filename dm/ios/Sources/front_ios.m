@@ -179,7 +179,7 @@ static UILabel *front_ios_fps_label(void) {
         }
         n0 = n; t0 = now;
     }];
-    LOG(g_hud ? "front end: compact performance stats on" : "front end: frame-rate counter on");
+    LOG("%s", g_hud ? "front end: compact performance stats on" : "front end: frame-rate counter on");
     return l;
 }
 

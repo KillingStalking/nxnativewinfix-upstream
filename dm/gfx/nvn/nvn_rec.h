@@ -21,6 +21,7 @@
 // No mutex: before, ubc_wait locked a mutex and signalled a condition on every spin while the thread slept, and the woken thread could not get that mutex back. Ocarina of
 // Time on one build: the replay thread spent half its busy time there, the copy thread waited for the mutex 9 times as long as it copied, and translation took 170-330k
 // instructions a draw against 32-48k
+#include <os/os_sync_wait_on_address.h>
 typedef struct { void *d; const void *s; size_t n; } ubc_op;
 enum { UBC_N = 8192, UBC_SPIN = 4096 };   // UBC_SPIN: a waiter's spins before it sleeps (the copies it waits for are usually a few KB)
 static ubc_op g_ubc[UBC_N];

@@ -55,9 +55,11 @@ static size_t geo_capture_unique(uint32_t *order, size_t count, int restart, uin
 static int geo_cpu_hazard(uint64_t lo, uint64_t n) {
     if (!n) return 0;
     if (!lo || n > UINT64_MAX - lo) return 1;
-    if (drw_valid()) return drw_hits(lo, n) || nvn_sparse_alias(lo, lo + n);   // drained in this submission: only later writes count
     if (g_sbw_over) return 1;
-    return pend_hits(lo, n) || sbw_hits(lo, lo + n) || gw_live(lo, lo + n);
+    return pend_hits(lo, n) ||
+           sbw_hits(lo, lo + n) ||
+           gw_live(lo, lo + n) ||
+           nvn_sparse_alias(lo, lo + n);
 }
 static int geo_conversion_hazard(NvShader *vs) {
     for (int v = 0; v < vs->rf.nv; v++) {
@@ -139,7 +141,7 @@ static void vertex_dump(NvShader *vs, const p_draw *dw, const p_draw_idx *di) {
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     MTL4RenderPassDescriptor *rd = [MTL4RenderPassDescriptor new]; rd.renderTargetWidth = rd.renderTargetHeight = rd.defaultRasterSampleCount = 1;
     id<MTL4RenderCommandEncoder> en = enc_r_begin(rd); enc_r_pso(en, ps);
-    { int bad = bind_vbufs(en, &vs->rf); if (bad >= 0) { RED_ONCE(158, "vertex stream %d's buffer %#llx is in no memory pool; draw skipped", bad, (unsigned long long)S.vbuf[bad].address); enc_r_end(en); return; } }
+    bind_vbufs(en);
     vconv_bind(en, vs, 1, &range, NULL); args_dirty_all(); encode_args(en, vs, 0, 1); enc_r_vbuf(en, 13, gpu);
     enc_r_draw_instanced(en, MTLPrimitiveTypePoint, lo, span, 1, (uint32_t)info[3]); enc_r_end(en);
     mdi_wait();
@@ -354,7 +356,7 @@ static NvShader *geo_lean_pick(NvProg *pr, NvShader *gs, int topology, int insta
         static int failed;
         if (failed) return NULL;
         NSError *error = nil;
-        id<MTLLibrary> lib = host_lib("geo_pack", &error);
+        id<MTLLibrary> lib = host_msl_lib(g_dev, nil, "geo_pack", &error);
         const char *names[] = {"geo_lean_cull", "geo_lean_index", "geo_lean_tri"};
         for (int i = 0; i < 3 && lib; i++) g_geo_lean_k[i] = [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@(names[i])] error:&error];
         if (!g_geo_lean_k[0] || !g_geo_lean_k[1] || !g_geo_lean_k[2]) {
@@ -722,7 +724,7 @@ static int geo_mesh_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di) {
     g_geo_program = nil; g_geo_mesh.on = 0; args_dirty_all();
     if (g_geo_mesh.miss) { g_geo_mesh_wait++; return 0; }
     // the kernel's storage writes, noted as its arguments were encoded (always: geo_mesh_encode), so a drain's list of later writes holds them (g_wr_geo, drw_valid)
-    swrite_note(pr); udc_note_draw(pr, 0); g_wr_epoch++; g_wr_geo++; g_mdx_epoch++;
+    swrite_note(pr); udc_note_draw(pr); g_wr_epoch++; g_mdx_epoch++;
     if (!g_geo_mesh_n++) MLOG("geometry mesh: first mesh draw, vertex %s kernel %s, %u triangles", pr->sh[0]->key, g_geo_mesh.lean->key, g_geo_mesh.a.count / 3);
     return 1;
 }
@@ -983,8 +985,7 @@ static void geo_capture_one(id<MTL4RenderCommandEncoder> re, const geo_job *j) {
     memset(g_vbuf_need, 0, sizeof g_vbuf_need);   // a later draw's bounds do not apply here (geo_prepare)
     enc_r_pso(re, j->capture);
     {   // the capture shares its encoder with the job's other stages, which read what it writes: it is not skipped alone, and the stream's slot keeps an earlier buffer
-        int bad = bind_vbufs(re, &j->vs->rf);
-        if (bad >= 0) RED_ONCE(160, "vertex stream %d's buffer %#llx is in no memory pool; a geometry capture reads the buffer bound before", bad, (unsigned long long)S.vbuf[bad].address);
+       bind_vbufs(re);
     }
     vconv_bind(re, j->vs, 1, &j->vertex_range, NULL);
     args_dirty_all(); encode_args(re, j->vs, 0, 1); enc_r_vbuf(re, 13, j->capture_info);
@@ -1006,7 +1007,7 @@ static void geo_gs_one(id<MTL4ComputeCommandEncoder> ce, const geo_job *j) {
         enc_c_dispatch(ce, MTLSizeMake((j->groups + 63) / 64, 1, 1), MTLSizeMake(64, 1, 1));
     }
     // its guest storage writes are noted (geo_prep, encode_args), so a drain's list of later writes holds them (g_wr_geo, drw_valid)
-    swrite_note(j->pr); udc_note_draw(j->pr, 0); g_wr_epoch++; g_wr_geo++; g_mdx_epoch++;
+    swrite_note(j->pr); udc_note_draw(j->pr); g_wr_epoch++; g_mdx_epoch++;
 }
 static void geo_raster(const geo_job *j, int last_in_run) {
     g_geo_bind[1] = j->output;
@@ -1088,7 +1089,7 @@ static void geo_draw_(NvProg *pr, const p_draw *dw0, const p_draw_idx *di0, uint
     geo_job *j0 = &g_geo_run[0];
     if (geo_prep(pr, dw0, di0, j0, 1, primitive_base) <= 0) return;
     static id<MTLComputePipelineState> pack[5];   // count, parallel scan, write, fused small draw, legacy scan
-    if (!pack[4]) { NSError *e = nil; id<MTLLibrary> lib = host_lib("geo_pack", &e);
+    if (!pack[4]) { NSError *e = nil; id<MTLLibrary> lib = host_msl_lib(g_dev, nil, "geo_pack", &e);
         const char *fn[5] = {"geo_pack_count", "geo_pack_scan", "geo_pack_write", "geo_pack_small", "geo_pack_scan_legacy"};
         for (int i = 0; i < 5 && lib; i++) if (!(pack[i] = [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@(fn[i])] error:&e])) break;
         if (!pack[4]) { for (int i = 0; i < 5; i++) pack[i] = nil; MLOG("[RED] geometry index compaction: %s", e.localizedDescription.UTF8String); return; } }

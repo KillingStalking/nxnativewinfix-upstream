@@ -21,7 +21,7 @@ IOS = DM / 'ios'
 HOST = DM / 'host'
 sys.path.insert(0, str(DM / 'tools'))
 import romfs as rfs   # the RomFS as a folder or as one DMROMFS1 image (nx_extract --romfs-image), read alike
-
+import shader_lib
 
 def t(msg): print(f'[{time.strftime("%H:%M:%S")}] {msg}', flush=True)
 def die(msg): t(f'FAIL: {msg}'); sys.exit(1)
@@ -51,7 +51,8 @@ def host_sources(game_h_dir):
     gfx = sorted(gfx, key=lambda p: os.path.relpath(p, HOST).replace('\\', '/'))   # make's $(sort) orders the words as text
     vpx = DM / 'third_party/libvpx'
     vpx_src = sorted(vpx.rglob('*.c'), key=lambda p: p.as_posix())
-    incs = [DM / 'gfx/nvn/include', DM / 'third_party/vulkan-headers/include', game_h_dir, vpx, DM / 'third_party/stb_vorbis', vpx / 'config']
+    dav1d = DM / 'third_party/dav1d'
+    incs = [DM / 'host/gen/msl-iphoneos', dav1d, dav1d / 'include', dav1d / 'config', DM / 'gfx/nvn/include', DM / 'third_party/vulkan-headers/include', game_h_dir, vpx, DM / 'third_party/stb_vorbis', vpx / 'config']
     files = []
     for s in src + gfx + vpx_src:
         s = s.resolve()
@@ -282,21 +283,32 @@ def main():
                                 else 'gl' if (msl_ios / 'gl/gl_shaders.metallib').exists() else 'nvn')
     capture = env.get('NXW_CAPTURE_IPA') == '1'   # a capture IPA: no shader libraries (the game runs only to compile its run-time shaders, which its env.txt has the host save)
     if capture:
-        msldir = {'vulkan': 'vk', 'gl': 'gl'}.get(gfx, f'b-{v}'); msl_ios = w / 'build/ios/empty_msl'; (msl_ios / msldir).mkdir(parents=True, exist_ok=True)
+        msldir = {'vulkan': 'vk', 'gl': 'gl'}.get(gfx, f'b-{v}')
+        msl_ios = w / 'build/ios/empty_msl'
+        (msl_ios / msldir).mkdir(parents=True, exist_ok=True)
         t('capture IPA: no shader libraries; the game saves the shaders it compiles at run time into Documents')
     elif gfx == 'vulkan':
-        if not (msl_ios / 'vk/vk_shaders.metallib').exists(): die(f'no iOS Vulkan shader library {msl_ios}/vk')
+        if not (msl_ios / 'vk/vk_shaders.metallib').exists():
+            die(f'no iOS Vulkan shader library {msl_ios}/vk')
         msldir = 'vk'
     elif gfx == 'gl':
-        if not (msl_ios / 'gl/gl_shaders.metallib').exists(): die(f'no iOS GL shader library {msl_ios}/gl')
+        if not (msl_ios / 'gl/gl_shaders.metallib').exists():
+            die(f'no iOS GL shader library {msl_ios}/gl')
         msldir = 'gl'
     else:
         msldir = f'b-{v}'
-        if not list((msl_ios / msldir).glob('*_b.metallib')): die(f'no iOS shader libraries {msl_ios}/{msldir}')
+        shader_dir = shader_lib.view(msl_ios / msldir)
+        if not shader_lib.has_library(msl_ios / msldir):
+            die(f'no iOS shader libraries {msl_ios}/{msldir}')
+
         inputs = py(DM / 'gfx/tools/dmsh_chain.py', '--inputs', env=dict(env, DM_GAME=game))
-        stamp = (msl_ios / msldir / 'inputs.tsv')
+        stamp = shader_dir / 'inputs.tsv'
         lines = stamp.read_text(encoding='utf-8').splitlines() if stamp.exists() else []
-        if f'game\t{game}' not in lines or f'inputs\t{inputs}' not in lines: die(f'the iOS shader libraries {msl_ios}/{msldir} are not a full build from this profile\'s current tables (inputs {inputs})')
+
+        if lines:
+            if f'game\t{game}' not in lines or f'inputs\t{inputs}' not in lines:
+                die(f'the iOS shader libraries {msl_ios}/{msldir} are not a full build from this profile\'s current tables (inputs {inputs})')
+
         c1 = gd / 'c1_full.tsv'
         if not (c1.exists() and c1.read_text(encoding='utf-8').splitlines()[:1] and c1.read_text(encoding='utf-8').splitlines()[0].startswith(f'# chain b-{v} inputs {inputs} ')):
             die(f'{c1} is missing or not made from these libraries (chain {v}, inputs {inputs})')
@@ -349,7 +361,9 @@ def main():
     font = tc.std_font() or die('no standard font: set STD_FONT to a TTF with broad Unicode coverage')
     shutil.copy2(font, dmres / 'font/standard.ttf'); t(f'standard font: {font}')
     py(DM / 'tools/make_ext_font.py', dmres / 'font/nintendo_ext.ttf', tc.letter_font() or die('no bold TTF for the button icons: set LETTER_FONT'))
-
+    host_msl = DM / 'host/gen/msl-iphoneos/host_msl_gen.h'
+    msl_sources = sorted((DM / 'gfx/msl').glob('*.metal'))
+    py(DM / 'gfx/tools/host_msl.py', '--sdk', 'iphoneos', '--min', '26.0', host_msl, *msl_sources)
     files, incs = host_sources(gen / 'profile')
     files += [p.resolve() for p in sorted((IOS / 'Sources').glob('*.m'))] + [(WIN / 'ios/Launcher.m').resolve(), (WIN / 'ios/DataHelp.m').resolve(), (WIN / 'ios/nxw_unzip.c').resolve(), es.resolve()]
     fws = frameworks(sdk, files)
