@@ -217,13 +217,14 @@ int main(void) { @autoreleasepool {
     pixels(big,0x55667788); pixels(tex_mtl(&a[63]),0xa1b2c3d4); pixels(small,0x76543210);
     separate_storage(&pool,small.heap);
     same_cell(&pool);
-    fragment_copy(small,0x76543210);
+    int parent_residency = parent_texture_residency_on();
+    if (parent_residency) fragment_copy(small,0x76543210);
     indirect_pixels(small,0x76543210);   // writes to other pools, offsets and formats left it intact
     atomic_colour(&pool);
     depth_planes(&pool);
     cross_size_read();
     CHECK([g_res_objects containsObject:small.heap],"the parent heap is resident for indirect access");
-    CHECK([g_res_objects containsObject:small],"the view parent descriptor is resident alongside its heap");
+    CHECK([g_res_objects containsObject:small] == parent_residency, parent_residency ? "the view parent descriptor is resident alongside its heap" : "legacy mode keeps only the heap resident");
     // Different offsets, formats, CPU-visible and sparse flags cannot join this family.
     tex_t other=image(&pool,991000,64,64); other.off=10<<20; other.mem=pool.mem+other.off; mtl_tex_init(&other);
     CHECK(!objc_getAssociatedObject(tex_mtl(&other),&g_image_heap_owner_key),"single-description storage stays out of the family heaps (its memory is a recycled heap of its own, rh_texture)");
