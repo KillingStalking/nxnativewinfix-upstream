@@ -2542,10 +2542,10 @@ static void tex_zero_fill(id<MTLTexture> mt, int bc_astc_tex) {
     NSUInteger slices = mt.arrayLength * (tt == MTLTextureTypeCube || tt == MTLTextureTypeCubeArray ? 6 : 1);
     size_t need = (size_t)mt.width * bpp * mt.height * mt.depth;   // level 0, one slice is the largest
     if (need > (64u << 20)) { static int big; if (!big++) MLOG("new-texture zeroing: %lux%lux%lu exceeds 64 MB, not cleared", (unsigned long)mt.width, (unsigned long)mt.height, (unsigned long)mt.depth); return; }
-    up_begin();
     if (zero_fill_bands()) {
         // Bound the shared zero buffer to 4 MiB. Keep each row band and depth group within it.
         id<MTLBuffer> zb = zero_buf((size_t)mt.width * bpp); if (!zb) return;
+        up_begin();
         for (NSUInteger l = 0; l < mt.mipmapLevelCount; l++) {
             NSUInteger w = MAX(mt.width >> l, 1u), h = MAX(mt.height >> l, 1u), z = tt == MTLTextureType3D ? MAX(mt.depth >> l, 1u) : 1;
             size_t row = w * bpp, rows = MIN(h, zb.length / row);
@@ -2559,6 +2559,7 @@ static void tex_zero_fill(id<MTLTexture> mt, int bc_astc_tex) {
         }
     } else {
         id<MTLBuffer> zb = zero_buf(need); if (!zb) return;
+        up_begin();
         for (NSUInteger l = 0; l < mt.mipmapLevelCount; l++) {
             NSUInteger w = MAX(mt.width >> l, 1u), h = MAX(mt.height >> l, 1u), z = tt == MTLTextureType3D ? MAX(mt.depth >> l, 1u) : 1;
             for (NSUInteger slice = 0; slice < slices; slice++)
