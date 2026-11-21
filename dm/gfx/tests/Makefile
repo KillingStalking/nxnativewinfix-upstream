@@ -126,7 +126,7 @@ t_cpu_tex: t_cpu_tex.m $(MTL_T_DEP)
 check_t_cpu_tex: t_cpu_tex
 	MTL_DEBUG_LAYER=1 ./t_cpu_tex --metal
 t_image_alias: t_image_alias.m $(MTL_T_DEP)
-	clang $(CFLAGS) -fobjc-arc -o $@ t_image_alias.m $(filter-out ../nvn/hle_nvn.c,$(MTL_T_SRC)) $(FW)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_image_alias.m $(MTL_T_SRC) $(FW)
 .PHONY: check_t_image_alias
 check_t_image_alias: t_image_alias
 	DM_NVN_PARENT_TEXTURE_RESIDENCY=0 MTL_DEBUG_LAYER=1 ./t_image_alias
