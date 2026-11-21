@@ -218,10 +218,26 @@ enum { RS_SITES = 16 }; static struct { int line; uint64_t n, bytes; } g_rs_site
 #define res_add(r) res_add_at((r), __LINE__)
 // Both run on guest threads too (pool_res from mtl_addr, uploads), whose implicit autorelease pools never drain; containsObject: / removeObject: on a weak NSHashTable leave the object
 // autoreleased in the calling thread's pool (measured in a standalone test: the object outlived its last strong reference until the thread ended), so each has a pool of its own
+static int parent_texture_residency_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("DM_NVN_PARENT_TEXTURE_RESIDENCY");
+        on = e && atoi(e) != 0;
+        MLOG("placed texture parent residency: %s (DM_NVN_PARENT_TEXTURE_RESIDENCY=1 enables parent descriptors; default keeps heap-only behavior)", on ? "on" : "off");
+    }
+    return on;
+}
 static void res_add_at(id<MTLAllocation> allocation, int line) { @autoreleasepool {
     if (!allocation) return;
-    // An indirectly addressed placed texture needs its heap resident. The heap owner below removes it only after the last texture/view has gone.
-    id<MTLAllocation> r = [(id)allocation conformsToProtocol:@protocol(MTLResource)] && ((id<MTLResource>)allocation).heap ? (id)((id<MTLResource>)allocation).heap : allocation;
+    // A placed texture's heap covers storage; fragment sampling through its
+    // views also needs the parent texture descriptor. Retire both through the
+    // existing ownership and queued-residency paths, not a second heap queue.
+    id<MTLAllocation> r = allocation;
+    if ([(id)allocation conformsToProtocol:@protocol(MTLResource)] && ((id<MTLResource>)allocation).heap) {
+        id<MTLAllocation> heap = (id)((id<MTLResource>)allocation).heap;
+        if (parent_texture_residency_on()) res_add_at(heap, line);
+        else r = heap;   // legacy: only the heap enters the residency set
+    }
     pthread_mutex_lock(&g_res_mu);
     if (!g_res_objects) g_res_objects = [NSHashTable weakObjectsHashTable];
     if ([g_res_objects containsObject:r]) { pthread_mutex_unlock(&g_res_mu); return; }   // already resident (a shared texture resolved again): marking the set dirty would cost a commit that changes nothing
@@ -233,7 +249,7 @@ static void res_add_at(id<MTLAllocation> allocation, int line) { @autoreleasepoo
 } }
 static void res_remove(id<MTLAllocation> r) { @autoreleasepool {
     if (!r) return;
-    if ([(id)r conformsToProtocol:@protocol(MTLResource)] && ((id<MTLResource>)r).heap) return;
+    if (!parent_texture_residency_on() && [(id)r conformsToProtocol:@protocol(MTLResource)] && ((id<MTLResource>)r).heap) return;
     pthread_mutex_lock(&g_res_mu);
     if (![g_res_objects containsObject:r]) { pthread_mutex_unlock(&g_res_mu); return; }
     [g_res removeAllocation:(id<MTLAllocation>)r];
