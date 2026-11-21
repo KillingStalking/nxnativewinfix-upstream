@@ -11,7 +11,8 @@ static int checks, failed;
 #define CHECK(c, label) do { checks++; if (!(c)) { failed++; fprintf(stderr, "FAIL: %s\n", label); } } while (0)
 
 int main(void) { @autoreleasepool {
-    setenv("DM_NVN_ZERO_FILL_BANDS", "1", 1);
+    int bands = getenv("DM_NVN_ZERO_FILL_BANDS") && atoi(getenv("DM_NVN_ZERO_FILL_BANDS")) != 0;
+    size_t legacy_max = 4u << 20;
     mtl_init();
     id<MTLCommandQueue> queue = [g_dev newCommandQueue];
     struct { MTLTextureType type; MTLPixelFormat pf; unsigned w, h, depth, layers, levels, bpp, pieces; const char *label; } cases[] = {   // pieces: copies into level 0 of layer 0
@@ -29,6 +30,7 @@ int main(void) { @autoreleasepool {
         CHECK(base != nil, "synthetic colour texture allocates");
         if (!base) continue;
         size_t bpp = cases[i].bpp, img0 = (size_t)cases[i].w * cases[i].h * bpp;
+        legacy_max = MAX(legacy_max, img0 * cases[i].depth);
         id<MTLBuffer> io = [g_dev newBufferWithLength:img0 options:MTLResourceStorageModeShared];
         memset(io.contents, 0x5a, img0);
         id<MTLCommandBuffer> cb = [queue commandBuffer]; id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
@@ -43,10 +45,10 @@ int main(void) { @autoreleasepool {
         state_reset(); memset(&R, 0, sizeof R); mtl_sub_begin();
         tex_zero_fill(base, 0);
         int pieces0 = 0; for (int k = 0; k < g_nup_blits; k++) pieces0 += g_up_blits[k].dst == base && g_up_blits[k].slice == 0 && g_up_blits[k].level == 0 && !g_up_blits[k].tsrc;
-        CHECK(pieces0 == (int)cases[i].pieces, "level 0 of layer 0 is zeroed by the expected number of copies");
+        CHECK(pieces0 == (bands ? (int)cases[i].pieces : 1), "level 0 of layer 0 is zeroed by the expected number of copies");
         mtl_sub_commit(); mtl_drain();
         CHECK(!mtl_last_commit_error(), "zero fill completes without GPU error");
-        CHECK(zero_buf(1).length == (4u << 20), "the zero buffer stays at 4 MB");
+        CHECK(zero_buf(1).length == (bands ? (4u << 20) : legacy_max), bands ? "the zero buffer stays at 4 MB" : "the whole-image path retains its largest requested buffer");
         int clean = 1;
         for (NSUInteger l = 0; l < base.mipmapLevelCount; l++) for (NSUInteger s = 0; s < base.arrayLength; s++) {
             NSUInteger w = MAX(base.width >> l, 1u), h = MAX(base.height >> l, 1u), z = MAX(base.depth >> l, 1u);
