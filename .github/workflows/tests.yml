@@ -190,6 +190,11 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install spirv-tools
+      - name: Rebuild shader translator from checked-out Ryujinx sources
+        run: |
+          ./dm/tools/native_tools.sh dmsh_xlate
+          python3 dm/gfx/tools/tool_lock.py --update-lock
+          python3 dm/gfx/tools/dmsh_chain.py --header
       - name: Run the test files
         env:
           DM_GAME: ${{ env.GAME }}   # test_tbdr_budget runs a tool that needs a profile
@@ -203,6 +208,15 @@ jobs:
             echo "::endgroup::"
           done
           exit $failed
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: dmsh-translator-generated
+          if-no-files-found: ignore
+          path: |
+            dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate
+            dm/gfx/tools/dmsh_chain.lock
+            dm/gfx/nvn/dmsh_chain.h
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
